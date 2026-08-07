@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Football Dribble</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<h1>Dribble past the defenders and score!</h1>
+
+<div class="panel">
+  <canvas id="pitch" width="800" height="500" tabindex="0"></canvas>
+  <div class="controls">
+    Move by dragging your finger on the touchpad (the player heads toward
+    the pointer), or with the Arrow keys / W/A/S/D. Click or press Space to
+    shoot in the direction you're facing. Beat the three red defenders in
+    the open field, then reach the shaded strip in front of the goal -- a
+    safe zone they can't enter -- where it's just you against the keeper.
+  </div>
+  <div class="status-line" id="statusLine">Move the pointer on the pitch to steer, or use Arrow keys/WASD. Click or press Space to shoot.</div>
+  <div class="status-line" id="scoreLine">Goals: 0 / Attempts: 0</div>
+  <button id="restartBtn">Restart</button>
+</div>
+
+<script src="game.js"></script>
+
+</body>
+</html>
