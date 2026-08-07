@@ -1,0 +1,946 @@
+"""
+Generates a self-contained HTML applet illustrating how the release angle
+of a basketball shot affects whether the ball goes through the hoop.
+
+Unlike the football (angle-vs-distance) applet, this one has a single
+panel only -- there's no graph, just the shooting game. Run this script
+to (re)write the HTML file.
+"""
+
+from pathlib import Path
+
+OUTPUT_FILENAME = "basketball_shot_applet.html"
+
+HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Basketball Shot Angle</title>
+<style>
+  :root {
+    --floor: #c9915a;
+    --floor-line: #a8703d;
+    --wall: #dfe7ee;
+    --ink: #1b1b1b;
+    --accent: #e65100;
+    --line: #444;
+    --good: #2e7d32;
+    --bad: #c62828;
+  }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: #f4f4f2;
+    color: var(--ink);
+    margin: 0;
+    padding: 24px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 16px 0;
+  }
+  .panel {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    display: inline-block;
+  }
+  #courtSvg {
+    background: var(--wall);
+    border-radius: 6px;
+    display: block;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .controls label {
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  input[type="range"] {
+    width: 260px;
+  }
+  button {
+    font-size: 14px;
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  button.secondary {
+    background: #fff;
+    color: var(--line);
+    border: 1px solid #bbb;
+  }
+  .layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  .account-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    font-size: 14px;
+  }
+  .account-bar select {
+    font-size: 14px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid #bbb;
+  }
+  .leaderboard-panel {
+    min-width: 220px;
+  }
+  .leaderboard-panel h2 {
+    font-size: 15px;
+    margin: 0 0 10px 0;
+    color: #555;
+  }
+  #leaderboardList {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 14px;
+  }
+  #leaderboardList li {
+    margin-bottom: 6px;
+  }
+  #leaderboardList li.current-player {
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .angle-readout {
+    font-weight: 600;
+    min-width: 42px;
+    display: inline-block;
+  }
+  .status-line {
+    margin-top: 10px;
+    font-size: 14px;
+    color: #444;
+  }
+  .status-line .result {
+    font-weight: 700;
+  }
+  .result.make {
+    color: var(--good);
+  }
+  .result.miss {
+    color: var(--bad);
+  }
+  .trace {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-dasharray: 4 3;
+  }
+  .math-challenge {
+    display: none;
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid #ffcc80;
+    background: #fff8e1;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .math-challenge .controls {
+    margin-top: 6px;
+  }
+  #mathAnswer {
+    width: 70px;
+    font-size: 14px;
+    padding: 4px 6px;
+  }
+  #mathFeedback.correct {
+    color: var(--good);
+    font-weight: 600;
+  }
+  #mathFeedback.wrong {
+    color: var(--bad);
+    font-weight: 600;
+  }
+  #rankLine {
+    font-weight: 600;
+  }
+  #rankLine.rank-up {
+    color: var(--good);
+  }
+  #rankLine.rank-down {
+    color: var(--bad);
+  }
+</style>
+</head>
+<body>
+
+<h1>Find the angle that makes the basket</h1>
+
+<div class="account-bar">
+  <label for="playerSelect">Player:</label>
+  <select id="playerSelect"></select>
+  <button class="secondary" id="addPlayerBtn">+ Add player</button>
+  <button class="secondary" id="renamePlayerBtn">Rename</button>
+</div>
+
+<div class="layout">
+
+  <div class="panel">
+    <svg id="courtSvg" width="760" height="380"></svg>
+    <div class="controls">
+      <label for="angleSlider">Angle: <span class="angle-readout" id="angleReadout">45&deg;</span></label>
+      <input type="range" id="angleSlider" min="0" max="90" step="1" value="45">
+      <button id="shootBtn">Shoot</button>
+    </div>
+    <div class="status-line" id="distLine"></div>
+    <div class="status-line" id="statusLine">Take a shot to get started.</div>
+    <div class="status-line" id="scoreLine">Makes: 0 / Attempts: 0</div>
+    <div class="status-line" id="rankLine">Rank 1 &mdash; score to rank up</div>
+
+    <div class="math-challenge" id="mathChallenge">
+      <div><strong>Miss twice in a row and you owe a math answer:</strong></div>
+      <div class="controls">
+        <span id="mathQuestion"></span>
+        <input type="number" id="mathAnswer" inputmode="numeric">
+        <button id="mathSubmitBtn">Submit</button>
+      </div>
+      <div class="status-line" id="mathFeedback"></div>
+    </div>
+  </div>
+
+  <div class="panel leaderboard-panel">
+    <h2>Leaderboard</h2>
+    <ol id="leaderboardList"></ol>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Physics constants ----
+  var V0   = 11;     // initial ball speed, m/s (constant regardless of angle)
+  var G    = 9.81;   // gravity, m/s^2
+  var DIST = 7;      // horizontal distance from shooter to hoop, m -- re-randomized after every shot
+  var MIN_DIST = 4, MAX_DIST = 11; // range the hoop can be placed within, m
+  var HOOP_H = 3.05; // rim height above the floor, m
+  var MAKE_TOL = 0.3; // how close (in m) the trajectory must pass to the rim height at the rim's x position to count as a make
+
+  var NS = "http://www.w3.org/2000/svg";
+  function svgEl(tag, attrs) {
+    var el = document.createElementNS(NS, tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  // ---- Court panel setup ----
+  var courtSvg = document.getElementById("courtSvg");
+  var GW = 760, GH = 380;
+  var marginX = 50, marginTop = 20;
+  var groundY = GH - 40;
+  var startX  = marginX;
+
+  var availW = GW - 2 * marginX;
+  var availH = groundY - marginTop;
+
+  // A nominal release height, used only to size the scale so the whole
+  // 0-90 degree range fits on screen without clipping. The actual release
+  // point used by the physics is derived from the player figure's hand
+  // position once the scale is known (see below), so the ball always
+  // visually leaves from where the hand is drawn.
+  var NOMINAL_H0 = 2.1;
+  var maxHeightAbs = NOMINAL_H0 + (V0 * V0) / (2 * G); // apex height at 90 degrees
+
+  function rangeAtRad(rad, h0) {
+    var vx = V0 * Math.cos(rad);
+    var vy = V0 * Math.sin(rad);
+    if (vx <= 0.0001) return 0;
+    var disc = vy * vy + 2 * G * h0;
+    var t = (vy + Math.sqrt(disc)) / G;
+    return vx * t;
+  }
+
+  var maxRange = 0;
+  for (var deg = 0; deg <= 90; deg += 1) {
+    var r = rangeAtRad(deg * Math.PI / 180, NOMINAL_H0);
+    if (r > maxRange) maxRange = r;
+  }
+
+  var scale = Math.min(availW / maxRange, availH / maxHeightAbs); // px per metre
+
+  // ---- Court background ----
+  courtSvg.appendChild(svgEl("rect", { x: 0, y: 0, width: GW, height: groundY, fill: "#dfe7ee" }));
+  courtSvg.appendChild(svgEl("rect", { x: 0, y: groundY, width: GW, height: GH - groundY, fill: "#c9915a" }));
+  courtSvg.appendChild(svgEl("line", { x1: 0, y1: groundY, x2: GW, y2: groundY, stroke: "#8a5a30", "stroke-width": 3 }));
+  // A few floorboard lines for texture
+  for (var fx = 40; fx < GW; fx += 60) {
+    courtSvg.appendChild(svgEl("line", {
+      x1: fx, y1: groundY, x2: fx, y2: GH, stroke: "#a8703d", "stroke-width": 1, opacity: 0.5
+    }));
+  }
+
+  var hoopX = startX + DIST * scale;
+  var hoopY = groundY - HOOP_H * scale; // rim height on screen never changes, only its horizontal distance does
+
+  // The backboard/rim/net are built here but appended to the SVG further
+  // down, *after* the ball and its flight trace. SVG draws later elements
+  // on top of earlier ones, so without this the flying ball (and its
+  // dashed trace) would pass in front of the hoop and briefly cover it on
+  // every shot -- which looked like the hoop was jumping around.
+  // Backboard geometry, in px relative to the rim -- shared by the drawing
+  // code below and the backboard-collision physics further down.
+  var BOARD_LEFT = 16, BOARD_WIDTH = 11, BOARD_TOP = 74, BOARD_HEIGHT = 110;
+
+  function buildHoop() {
+    var g = svgEl("g", {});
+    g.appendChild(svgEl("line", {
+      x1: hoopX + 22, y1: hoopY + 6, x2: hoopX + 22, y2: groundY,
+      stroke: "#777", "stroke-width": 5
+    }));
+    g.appendChild(svgEl("rect", {
+      x: hoopX + BOARD_LEFT, y: hoopY - BOARD_TOP, width: BOARD_WIDTH, height: BOARD_HEIGHT,
+      fill: "#fafafa", stroke: "#999", "stroke-width": 1.5
+    }));
+    g.appendChild(svgEl("ellipse", {
+      cx: hoopX, cy: hoopY, rx: 24, ry: 6, fill: "none", stroke: "#ff8f00", "stroke-width": 4
+    }));
+    var netPairs = [[-24, -6], [-13, -3], [13, 3], [24, 6]];
+    for (var np = 0; np < netPairs.length; np++) {
+      g.appendChild(svgEl("line", {
+        x1: hoopX + netPairs[np][0], y1: hoopY,
+        x2: hoopX + netPairs[np][1], y2: hoopY + 35,
+        stroke: "#ccc", "stroke-width": 1.5
+      }));
+    }
+    g.appendChild(svgEl("line", {
+      x1: hoopX - 13, y1: hoopY + 35, x2: hoopX + 13, y2: hoopY + 35, stroke: "#ccc", "stroke-width": 1.5
+    }));
+    return g;
+  }
+
+  // Backboard collision plane, in world units (metres): how far past the
+  // rim its front face sits, and the height range it covers. The rim's
+  // distance from the shooter changes every shot, but this offset from
+  // the rim -- and the board's height -- don't, so these are constants.
+  var BOARD_FRONT_OFFSET_M = BOARD_LEFT / scale;
+  var BOARD_TOP_M = HOOP_H + BOARD_TOP / scale;
+  var BOARD_BOTTOM_M = HOOP_H - (BOARD_HEIGHT - BOARD_TOP) / scale;
+  var BOARD_RESTITUTION = 0.45; // how much horizontal speed survives the bounce
+
+  var BALL_R = 10;
+
+  // Draws a small stylised basketball: orange circle with a vertical
+  // seam, a horizontal seam, and two curved side seams.
+  function makeBasketball(cx, cy) {
+    var g = svgEl("g", { transform: "translate(" + cx + "," + cy + ")" });
+    g.appendChild(svgEl("circle", {
+      cx: 0, cy: 0, r: BALL_R, fill: "#e8791a", stroke: "#3a1f00", "stroke-width": 1.2
+    }));
+    g.appendChild(svgEl("line", { x1: 0, y1: -BALL_R, x2: 0, y2: BALL_R, stroke: "#3a1f00", "stroke-width": 1 }));
+    g.appendChild(svgEl("line", { x1: -BALL_R, y1: 0, x2: BALL_R, y2: 0, stroke: "#3a1f00", "stroke-width": 1 }));
+    g.appendChild(svgEl("path", {
+      d: "M 0 " + (-BALL_R) + " Q " + (BALL_R * 0.65) + " 0 0 " + BALL_R,
+      fill: "none", stroke: "#3a1f00", "stroke-width": 1
+    }));
+    g.appendChild(svgEl("path", {
+      d: "M 0 " + (-BALL_R) + " Q " + (-BALL_R * 0.65) + " 0 0 " + BALL_R,
+      fill: "none", stroke: "#3a1f00", "stroke-width": 1
+    }));
+    return g;
+  }
+
+  function moveBall(ballGroup, x, y) {
+    ballGroup.setAttribute("transform", "translate(" + x + "," + y + ")");
+  }
+
+  // ---- Player figure ----
+  // The shooting arm pivots at the shoulder. At rest it already holds the
+  // ball up near the head (a realistic "set point"), and a small forward
+  // rotation extends it further up and toward the hoop on release -- so
+  // the rest hand position doubles as the ball's physics launch point.
+  var restVecX = 5, restVecY = -15; // hand offset from shoulder at rest, px
+
+  // Choose the release point first (sized from the scale), then derive
+  // the shoulder position from it so the drawn hand and the physics
+  // launch point are the same pixel.
+  var releaseY = groundY - NOMINAL_H0 * scale;
+  var shoulderX = startX - restVecX;
+  var shoulderY = releaseY - restVecY;
+  var H0 = (groundY - releaseY) / scale; // actual release height used by physics (~= NOMINAL_H0)
+
+  var headCenterY = shoulderY - 16;
+  var hipY = shoulderY + 33;
+
+  var player = svgEl("g", {});
+  player.appendChild(svgEl("circle", {
+    cx: shoulderX, cy: headCenterY, r: 7, fill: "#f2c9a0", stroke: "#333", "stroke-width": 1
+  }));
+  player.appendChild(svgEl("line", {
+    x1: shoulderX, y1: headCenterY + 7, x2: shoulderX, y2: hipY,
+    stroke: "#1565c0", "stroke-width": 5, "stroke-linecap": "round"
+  }));
+  // non-shooting arm, relaxed at the side
+  player.appendChild(svgEl("line", {
+    x1: shoulderX, y1: shoulderY, x2: shoulderX - 10, y2: shoulderY + 16,
+    stroke: "#1565c0", "stroke-width": 3, "stroke-linecap": "round"
+  }));
+  // legs, standing with toes pointing forward (toward the hoop)
+  player.appendChild(svgEl("line", {
+    x1: shoulderX, y1: hipY, x2: shoulderX + 5, y2: groundY,
+    stroke: "#263238", "stroke-width": 5, "stroke-linecap": "round"
+  }));
+  player.appendChild(svgEl("ellipse", { cx: shoulderX + 10, cy: groundY, rx: 6, ry: 3, fill: "#111" }));
+  player.appendChild(svgEl("line", {
+    x1: shoulderX, y1: hipY, x2: shoulderX - 5, y2: groundY,
+    stroke: "#263238", "stroke-width": 5, "stroke-linecap": "round"
+  }));
+  player.appendChild(svgEl("ellipse", { cx: shoulderX, cy: groundY, rx: 6, ry: 3, fill: "#111" }));
+
+  // Shooting arm: a rotatable group pivoting at the shoulder. Rotating it
+  // by a positive angle (counter-clockwise-ish in our earlier convention
+  // was for a vector pointing right-down; here the rest vector points
+  // up-forward already, and a positive rotation swings it further
+  // forward and up -- toward the hoop, in the +x direction.)
+  var shootArm = svgEl("g", { transform: "rotate(0 " + shoulderX + " " + shoulderY + ")" });
+  shootArm.appendChild(svgEl("line", {
+    x1: shoulderX, y1: shoulderY, x2: shoulderX + restVecX, y2: shoulderY + restVecY,
+    stroke: "#1565c0", "stroke-width": 3, "stroke-linecap": "round"
+  }));
+  player.appendChild(shootArm);
+  courtSvg.appendChild(player);
+
+  function setShootAngle(angleDeg) {
+    shootArm.setAttribute("transform", "rotate(" + angleDeg + " " + shoulderX + " " + shoulderY + ")");
+  }
+
+  // Static ball, held at the rest/release point
+  var ball = makeBasketball(startX, releaseY);
+  courtSvg.appendChild(ball);
+
+  // Aim line: previews the launch direction for the current slider angle
+  var aimLine = svgEl("line", {
+    x1: startX, y1: releaseY, x2: startX + 50, y2: releaseY,
+    stroke: "#333", "stroke-width": 2, "stroke-dasharray": "3 3"
+  });
+  courtSvg.appendChild(aimLine);
+
+  function updateAim(angleDeg) {
+    var rad = angleDeg * Math.PI / 180;
+    var len = 50;
+    aimLine.setAttribute("x2", startX + len * Math.cos(rad));
+    aimLine.setAttribute("y2", releaseY - len * Math.sin(rad));
+  }
+
+  // Persistent trace (cleared at the start of each new shot)
+  var traceGroup = svgEl("g", {});
+  courtSvg.appendChild(traceGroup);
+
+  // ---- Controls ----
+  var slider = document.getElementById("angleSlider");
+  var angleReadout = document.getElementById("angleReadout");
+  var shootBtn = document.getElementById("shootBtn");
+  var statusLine = document.getElementById("statusLine");
+  var scoreLine = document.getElementById("scoreLine");
+  var distLine = document.getElementById("distLine");
+  var rankLine = document.getElementById("rankLine");
+
+  // ---- Ranking: every make ranks you up by one.
+  var rank = 1;
+
+  function updateRankLine() {
+    rankLine.textContent = "Rank " + rank + " — score to rank up";
+  }
+  updateRankLine();
+
+  // ---- Math challenge: two misses in a row and a question is due ----
+  var mathChallenge = document.getElementById("mathChallenge");
+  var mathQuestion = document.getElementById("mathQuestion");
+  var mathAnswer = document.getElementById("mathAnswer");
+  var mathSubmitBtn = document.getElementById("mathSubmitBtn");
+  var mathFeedback = document.getElementById("mathFeedback");
+
+  var missStreak = 0;
+  var mathAnswerDue = null;
+
+  function askMathQuestion() {
+    var a = 2 + Math.floor(Math.random() * 11);   // 2..12
+    var b = 2 + Math.floor(Math.random() * 11);   // 2..12
+    var ops = ["+", "-", "×"];
+    var op = ops[Math.floor(Math.random() * ops.length)];
+
+    if (op === "-" && b > a) { var tmp = a; a = b; b = tmp; } // keep subtraction non-negative
+
+    if (op === "+") mathAnswerDue = a + b;
+    else if (op === "-") mathAnswerDue = a - b;
+    else mathAnswerDue = a * b;
+
+    mathQuestion.textContent = a + " " + op + " " + b + " = ?";
+    mathFeedback.textContent = "";
+    mathFeedback.className = "status-line";
+    mathAnswer.value = "";
+    mathChallenge.style.display = "block";
+    shootBtn.disabled = true;
+    slider.disabled = true;
+    mathAnswer.focus();
+  }
+
+  function checkMathAnswer() {
+    var given = Number(mathAnswer.value);
+    if (mathAnswer.value.trim() !== "" && given === mathAnswerDue) {
+      mathFeedback.textContent = "Correct! Go ahead and shoot.";
+      mathFeedback.className = "status-line correct";
+      // Solving the question clears the gate but doesn't erase the miss
+      // streak -- a third miss in a row still ranks you down.
+      mathAnswerDue = null;
+      mathChallenge.style.display = "none";
+      shootBtn.disabled = false;
+      slider.disabled = false;
+    } else {
+      mathFeedback.textContent = "Not quite -- try again.";
+      mathFeedback.className = "status-line wrong";
+      mathAnswer.value = "";
+      mathAnswer.focus();
+    }
+  }
+
+  mathSubmitBtn.addEventListener("click", checkMathAnswer);
+  mathAnswer.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") checkMathAnswer();
+  });
+
+  function randomDist() {
+    return MIN_DIST + Math.random() * (MAX_DIST - MIN_DIST);
+  }
+
+  // The hoop moves to a new random distance every time it's (re)placed --
+  // initially, and again after every shot. It's rebuilt and re-appended
+  // as the last child each time, so it always renders on top.
+  var hoopGroupEl = null;
+  function placeHoop(distMeters) {
+    DIST = distMeters;
+    hoopX = startX + DIST * scale;
+    if (hoopGroupEl && hoopGroupEl.parentNode) hoopGroupEl.parentNode.removeChild(hoopGroupEl);
+    hoopGroupEl = buildHoop();
+    courtSvg.appendChild(hoopGroupEl);
+    distLine.textContent = "Hoop distance: " + DIST.toFixed(1) + " m";
+  }
+
+  placeHoop(randomDist());
+
+  var attempts = 0, makes = 0;
+  var kicking = false;
+  var animId = null;
+
+  // ---- Accounts: each player keeps their own rank/makes/attempts,
+  // saved in this browser so they persist between visits. Player names
+  // default to Alex, Leo, Nino and Caterina but can be renamed or added
+  // to freely.
+  var ACCOUNTS_KEY = "basketballShotAccounts_v1";
+  var CURRENT_PLAYER_KEY = "basketballShotCurrentPlayer_v1";
+  var DEFAULT_PLAYER_NAMES = ["Alex", "Leo", "Nino", "Caterina"];
+
+  function loadAccounts() {
+    try {
+      var raw = localStorage.getItem(ACCOUNTS_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) { /* localStorage unavailable -- fall back to defaults */ }
+    return DEFAULT_PLAYER_NAMES.map(function (name) {
+      return { name: name, rank: 1, makes: 0, attempts: 0 };
+    });
+  }
+
+  function saveAccounts() {
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); } catch (e) {}
+  }
+
+  function loadCurrentPlayerIndex() {
+    try {
+      var raw = localStorage.getItem(CURRENT_PLAYER_KEY);
+      var idx = raw === null ? 0 : Number(raw);
+      if (idx >= 0 && idx < accounts.length) return idx;
+    } catch (e) {}
+    return 0;
+  }
+
+  function saveCurrentPlayerIndex() {
+    try { localStorage.setItem(CURRENT_PLAYER_KEY, String(currentPlayerIndex)); } catch (e) {}
+  }
+
+  var accounts = loadAccounts();
+  var currentPlayerIndex = loadCurrentPlayerIndex();
+
+  var playerSelect = document.getElementById("playerSelect");
+  var addPlayerBtn = document.getElementById("addPlayerBtn");
+  var renamePlayerBtn = document.getElementById("renamePlayerBtn");
+  var leaderboardList = document.getElementById("leaderboardList");
+
+  function renderPlayerSelect() {
+    playerSelect.innerHTML = "";
+    accounts.forEach(function (acc, i) {
+      var opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = acc.name;
+      if (i === currentPlayerIndex) opt.selected = true;
+      playerSelect.appendChild(opt);
+    });
+  }
+
+  function renderLeaderboard() {
+    var ranked = accounts.map(function (acc, i) { return { acc: acc, i: i }; });
+    ranked.sort(function (a, b) {
+      if (b.acc.rank !== a.acc.rank) return b.acc.rank - a.acc.rank;
+      return b.acc.makes - a.acc.makes;
+    });
+    leaderboardList.innerHTML = "";
+    ranked.forEach(function (entry) {
+      var li = document.createElement("li");
+      li.textContent = entry.acc.name + " — Rank " + entry.acc.rank +
+        " (" + entry.acc.makes + "/" + entry.acc.attempts + ")";
+      if (entry.i === currentPlayerIndex) li.className = "current-player";
+      leaderboardList.appendChild(li);
+    });
+  }
+
+  // Snapshot the live in-memory stats back into the current account
+  // record, so switching players (or closing the page) doesn't lose them.
+  function saveCurrentStatsIntoAccount() {
+    accounts[currentPlayerIndex].rank = rank;
+    accounts[currentPlayerIndex].makes = makes;
+    accounts[currentPlayerIndex].attempts = attempts;
+  }
+
+  function loadAccountIntoGame(idx) {
+    currentPlayerIndex = idx;
+    var acc = accounts[currentPlayerIndex];
+    rank = acc.rank;
+    makes = acc.makes;
+    attempts = acc.attempts;
+    missStreak = 0;
+    mathAnswerDue = null;
+    mathChallenge.style.display = "none";
+
+    updateRankLine();
+    rankLine.classList.remove("rank-up", "rank-down");
+    scoreLine.textContent = "Makes: " + makes + " / Attempts: " + attempts;
+    statusLine.innerHTML = "Playing as <strong>" + acc.name + "</strong>. Take a shot!";
+
+    shootBtn.disabled = false;
+    slider.disabled = false;
+
+    renderPlayerSelect();
+    renderLeaderboard();
+    saveCurrentPlayerIndex();
+  }
+
+  playerSelect.addEventListener("change", function () {
+    saveCurrentStatsIntoAccount();
+    saveAccounts();
+    loadAccountIntoGame(Number(playerSelect.value));
+  });
+
+  addPlayerBtn.addEventListener("click", function () {
+    var name = window.prompt("New player's name:");
+    if (name === null) return;
+    name = name.trim();
+    if (!name) return;
+    var exists = accounts.some(function (acc) {
+      return acc.name.toLowerCase() === name.toLowerCase();
+    });
+    if (exists) {
+      window.alert("There's already a player named \"" + name + "\".");
+      return;
+    }
+    saveCurrentStatsIntoAccount();
+    accounts.push({ name: name, rank: 1, makes: 0, attempts: 0 });
+    saveAccounts();
+    loadAccountIntoGame(accounts.length - 1);
+  });
+
+  renamePlayerBtn.addEventListener("click", function () {
+    var acc = accounts[currentPlayerIndex];
+    var name = window.prompt("Rename \"" + acc.name + "\" to:", acc.name);
+    if (name === null) return;
+    name = name.trim();
+    if (!name) return;
+    var exists = accounts.some(function (other, i) {
+      return i !== currentPlayerIndex && other.name.toLowerCase() === name.toLowerCase();
+    });
+    if (exists) {
+      window.alert("There's already a player named \"" + name + "\".");
+      return;
+    }
+    acc.name = name;
+    saveAccounts();
+    renderPlayerSelect();
+    renderLeaderboard();
+  });
+
+  slider.addEventListener("input", function () {
+    angleReadout.innerHTML = slider.value + "&deg;";
+    updateAim(Number(slider.value));
+  });
+  updateAim(Number(slider.value));
+
+  // Swings the shooting arm from its raised rest pose into a slightly
+  // further extended release pose. Calls onRelease partway through (near
+  // full extension) so the ball launches in sync with the arm, then
+  // calls onDone once the follow-through finishes.
+  function playShot(onRelease, onDone) {
+    var duration = 220;
+    var releaseFrac = 0.7;
+    var released = false;
+    var t0 = null;
+
+    function step(now) {
+      if (t0 === null) t0 = now;
+      var frac = Math.min((now - t0) / duration, 1);
+      setShootAngle((25 * frac).toFixed(1));
+
+      if (!released && frac >= releaseFrac) {
+        released = true;
+        onRelease();
+      }
+      if (frac < 1) {
+        requestAnimationFrame(step);
+      } else {
+        onDone();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function shoot() {
+    if (kicking) return;
+    kicking = true;
+    shootBtn.disabled = true;
+    slider.disabled = true;
+    statusLine.innerHTML = "";
+    playShot(launchBall, function () {});
+  }
+
+  function launchBall() {
+    var angleDeg = Number(slider.value);
+    var shotDist = DIST; // freeze the distance this shot was aimed at, since the hoop moves for the next one
+    var rad = angleDeg * Math.PI / 180;
+    var vx = V0 * Math.cos(rad);
+    var vy = V0 * Math.sin(rad);
+
+    var disc = vy * vy + 2 * G * H0;
+    var flightTimeToGround = (vy + Math.sqrt(disc)) / G;
+
+    var canReachHoop = vx > 0.0001;
+    var tAtHoop = canReachHoop ? (DIST / vx) : Infinity;
+    var yAtHoop = canReachHoop ? (H0 + vy * tAtHoop - 0.5 * G * tAtHoop * tAtHoop) : -1;
+    var directMake = canReachHoop && tAtHoop <= flightTimeToGround && Math.abs(yAtHoop - HOOP_H) < MAKE_TOL;
+
+    // A direct make ends the flight exactly at the rim, so it never
+    // reaches the backboard (which sits just past the rim) -- only check
+    // for a backboard bounce on shots that would otherwise miss.
+    var bounce = null;
+    if (!directMake && vx > 0.0001) {
+      var frontX = DIST + BOARD_FRONT_OFFSET_M;
+      var tBoard = frontX / vx;
+      if (tBoard > 0 && tBoard <= flightTimeToGround) {
+        var yBoard = H0 + vy * tBoard - 0.5 * G * tBoard * tBoard;
+        if (yBoard <= BOARD_TOP_M && yBoard >= BOARD_BOTTOM_M) {
+          var vyAtBoard = vy - G * tBoard;
+          var vxAfter = -BOARD_RESTITUTION * vx;
+          var discAfter = vyAtBoard * vyAtBoard + 2 * G * yBoard;
+          var tAfterLand = (vyAtBoard + Math.sqrt(discAfter)) / G;
+          bounce = {
+            t: tBoard, x: frontX, y: yBoard,
+            vx: vxAfter, vy: vyAtBoard, landDur: tAfterLand
+          };
+
+          // After bouncing off the board the ball heads back toward the
+          // rim (vxAfter is negative). If that path happens to cross the
+          // rim at the right height before landing, it's a real bank
+          // shot and should go in -- rather than always being forced to
+          // miss just because it touched the backboard first.
+          if (vxAfter < -0.0001) {
+            var sToRim = (DIST - frontX) / vxAfter;
+            if (sToRim > 0 && sToRim <= tAfterLand) {
+              var yAtRimAfterBounce = yBoard + vyAtBoard * sToRim - 0.5 * G * sToRim * sToRim;
+              if (Math.abs(yAtRimAfterBounce - HOOP_H) < MAKE_TOL) {
+                bounce.bankShotT = sToRim;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    var bankMake = !!(bounce && bounce.bankShotT !== undefined);
+    var make = directMake || bankMake;
+
+    var flightTime = directMake ? tAtHoop :
+      (bankMake ? bounce.t + bounce.bankShotT :
+      (bounce ? bounce.t + bounce.landDur : flightTimeToGround));
+
+    // Position (in world metres, distance from the shooter / height above
+    // the floor) at time t into the flight -- a single parabola normally,
+    // or two spliced together if the shot caroms off the backboard.
+    function positionAt(t) {
+      if (!bounce || t <= bounce.t) {
+        return { x: vx * t, y: H0 + vy * t - 0.5 * G * t * t };
+      }
+      var s = t - bounce.t;
+      return {
+        x: bounce.x + bounce.vx * s,
+        y: bounce.y + bounce.vy * s - 0.5 * G * s * s
+      };
+    }
+
+    while (traceGroup.firstChild) traceGroup.removeChild(traceGroup.firstChild);
+    ball.style.visibility = "hidden";
+
+    var flyingBall = makeBasketball(startX, releaseY);
+    var tracePath = svgEl("polyline", { points: "", "class": "trace" });
+    traceGroup.appendChild(tracePath);
+    traceGroup.appendChild(flyingBall);
+
+    var points = [];
+    var startTime = null;
+    var animDurationMs = (700 + 400 * Math.sin(rad)) * (bounce ? 1.3 : 1); // a little longer if there's a bounce to watch
+
+    function frame(now) {
+      if (startTime === null) startTime = now;
+      var elapsed = now - startTime;
+      var frac = Math.min(elapsed / animDurationMs, 1);
+      var t = frac * flightTime;
+
+      var pos = positionAt(t);
+      var ym = Math.max(pos.y, 0);
+
+      var px = startX + pos.x * scale;
+      var py = groundY - ym * scale;
+
+      points.push(px + "," + py);
+      tracePath.setAttribute("points", points.join(" "));
+      moveBall(flyingBall, px, py);
+
+      if (frac < 1) {
+        animId = requestAnimationFrame(frame);
+      } else if (make) {
+        dropThroughNet(px, py, angleDeg, shotDist, flyingBall, bankMake);
+      } else {
+        finishShot(angleDeg, shotDist, false, flyingBall, !!bounce, false);
+      }
+    }
+
+    animId = requestAnimationFrame(frame);
+  }
+
+  function dropThroughNet(fromX, fromY, angleDeg, shotDist, flyingBall, bankShot) {
+    var duration = 220;
+    var dropDist = 24;
+    var t0 = null;
+
+    function step(now) {
+      if (t0 === null) t0 = now;
+      var frac = Math.min((now - t0) / duration, 1);
+      moveBall(flyingBall, fromX, fromY + dropDist * frac);
+      if (frac < 1) {
+        animId = requestAnimationFrame(step);
+      } else {
+        finishShot(angleDeg, shotDist, true, flyingBall, bankShot, bankShot);
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function finishShot(angleDeg, shotDist, made, flyingBall, offBackboard, bankShot) {
+    animId = null;
+    kicking = false;
+
+    if (flyingBall && flyingBall.parentNode) flyingBall.parentNode.removeChild(flyingBall);
+
+    ball.style.visibility = "visible";
+    moveBall(ball, startX, releaseY);
+    setShootAngle(0);
+
+    attempts += 1;
+    var rankedUp = false;
+    var rankedDown = false;
+    if (made) {
+      makes += 1;
+      missStreak = 0;
+      rank += 1;
+      rankedUp = true;
+    } else {
+      missStreak += 1;
+      if (missStreak >= 3) {
+        rank = Math.max(1, rank - 1);
+        rankedDown = true;
+        missStreak = 0; // fresh start after the penalty
+      }
+    }
+
+    var resultText = made
+      ? (bankShot ? "BANK SHOT SWISH!" : "SWISH!")
+      : (offBackboard ? "OFF THE BACKBOARD" : "MISS");
+
+    statusLine.innerHTML = "Angle " + angleDeg + "&deg; at " + shotDist.toFixed(1) + " m &mdash; " +
+      "<span class=\"result " + (made ? "make" : "miss") + "\">" + resultText + "</span>" +
+      (rankedUp ? " &mdash; <strong>RANK UP! Now rank " + rank + "!</strong>" : "") +
+      (rankedDown ? " &mdash; <strong>RANK DOWN! Now rank " + rank + ".</strong>" : "");
+    scoreLine.textContent = "Makes: " + makes + " / Attempts: " + attempts;
+
+    updateRankLine();
+    rankLine.classList.toggle("rank-up", rankedUp);
+    rankLine.classList.toggle("rank-down", rankedDown);
+
+    // Persist this player's updated stats and refresh the leaderboard.
+    saveCurrentStatsIntoAccount();
+    saveAccounts();
+    renderLeaderboard();
+
+    // The hoop moves to a new spot after every shot.
+    placeHoop(randomDist());
+
+    if (!rankedDown && missStreak >= 2) {
+      // Two misses in a row: a math question is due before shooting again.
+      askMathQuestion();
+    } else {
+      shootBtn.disabled = false;
+      slider.disabled = false;
+    }
+  }
+
+  shootBtn.addEventListener("click", shoot);
+
+  // Load whichever player was last active (defaults to the first one).
+  loadAccountIntoGame(currentPlayerIndex);
+})();
+</script>
+
+</body>
+</html>
+"""
+
+
+def main():
+    out_dir = Path(__file__).resolve().parent.parent
+    out_path = out_dir / OUTPUT_FILENAME
+    out_path.write_text(HTML, encoding="utf-8")
+    print("Wrote", out_path)
+
+
+if __name__ == "__main__":
+    main()
