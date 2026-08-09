@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Zlatan's Ponytail Parkour</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: radial-gradient(circle at center, #1b3a1b, #0a1a0a);
+    font-family: 'Arial Narrow', Arial, sans-serif;
+  }
+  #stage {
+    position: relative; width: 900px; height: 560px; margin: 20px auto;
+  }
+  #ui {
+    position: absolute; top: 10px; left: 10px; color: #fff;
+    text-shadow: 0 0 4px #000; font-size: 18px; z-index: 5;
+  }
+  #msg {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    color: #ffd700; font-size: 22px; font-weight: bold;
+    text-shadow: 0 0 6px #000; z-index: 5; text-align: center;
+    pointer-events: none;
+  }
+  #restart {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    padding: 8px 20px; font-size: 16px; cursor: pointer;
+    background: #ffd700; border: none; border-radius: 6px; font-weight: bold;
+    display: none; z-index: 20; pointer-events: auto;
+  }
+  canvas { display: block; background: #2d6a2d; }
+  #hint {
+    position: absolute; bottom: 10px; left: 10px; color: #cfe; font-size: 13px;
+    text-shadow: 0 0 4px #000; z-index: 5; max-width: 500px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="ui">Level: <span id="level">1</span> / <span id="maxlevel">5</span> &nbsp; Shots: <span id="shots">0</span></div>
+  <div id="msg"></div>
+  <button id="restart">Play Again</button>
+  <div id="hint">Drag from the ball and release to shoot. Yellow bars are slides that fling the ball along their angle (pink ones spin!). Red circles are bounce bumpers (orange ones drift back and forth). Brown blocks are gate walls. Blue rings are portals. Get the ball into the talking ponytail!</div>
+  <canvas id="game" width="900" height="560"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const levelEl = document.getElementById('level');
+const shotsEl = document.getElementById('shots');
+const msgEl = document.getElementById('msg');
+const restartBtn = document.getElementById('restart');
+
+const TAUNTS = [
+  "Is that all you got?!",
+  "My ponytail dodges better than your defense!",
+  "Zlatan doesn't miss. You do.",
+  "Nice try, rookie!",
+  "Come on, aim like a champion!",
+  "This hairstyle has never lost a match!"
+];
+const WIN_LINES = [
+  "GOOOOAL! The ponytail has been struck down!",
+  "Zlatan bows. Ponytail: defeated!",
+  "Bullseye! Even Zlatan is impressed.",
+  "The ponytail flops in shame. Victory!"
+];
+
+let level = 1;
+const MAX_LEVEL = 10;
+let shots = 0;
+let gameWon = false;
+
+// Ball state
+let ball = { x: 60, y: H/2, r: 14, vx: 0, vy: 0, moving: false };
+let dragging = false;
+let dragCurrent = null;
+
+let borders = [];
+let obstacles = []; // {type:'circle'|'slide', ...}
+let ponytail = null;
+let tauntTimer = 0;
+let currentTaunt = "";
+
+const FRICTION = 0.992;
+const MIN_SPEED = 0.05;
+const MAX_DRAG = 140;
+
+function circle(x,y,r) { return {type:'circle', x, y, r, hitTimer:0}; }
+function slide(x,y,len,angleDeg) {
+  return {type:'slide', x, y, len, thickness: 16, angle: angleDeg*Math.PI/180, hitTimer:0};
+}
+function mover(x0,y0,x1,y1,r,period) {
+  return {type:'mover', x0, y0, x1, y1, r, period, t: Math.random()*period, x:x0, y:y0, hitTimer:0};
+}
+function spinner(x,y,len,angleDeg,angleSpeed) {
+  return {type:'spinner', x, y, len, thickness: 16, angle: angleDeg*Math.PI/180, angleSpeed, hitTimer:0};
+}
+function wall(x,y,w,h) { return {type:'wall', x, y, w, h}; }
+function portalPair(xA,yA,xB,yB,r) {
+  const a = {type:'portal', x:xA, y:yA, r, cooldown:0, hitTimer:0};
+  const b = {type:'portal', x:xB, y:yB, r, cooldown:0, hitTimer:0};
+  a.partner = b; b.partner = a;
+  return [a,b];
+}
+
+function buildLevel(n) {
+  obstacles = [];
+  ball = { x: 60, y: H/2, r: 14, vx: 0, vy: 0, moving: false };
+  shots = 0;
+  shotsEl.textContent = shots;
+  levelEl.textContent = n;
+  gameWon = false;
+  msgEl.textContent = "";
+  restartBtn.style.display = "none";
+
+  borders = [
+    {x:0,y:0,w:W,h:14},
+    {x:0,y:H-14,w:W,h:14},
+    {x:0,y:0,w:14,h:H},
+    {x:W-14,y:0,w:14,h:H}
+  ];
+
+  if (n === 1) {
+    obstacles.push(slide(250, 200, 180, 35));
+    obstacles.push(circle(480, 380, 34));
+    obstacles.push(slide(680, 200, 160, -30));
+    ponytail = {x:820,y:150,r:26,swing:0};
+  } else if (n === 2) {
+    obstacles.push(circle(220, 160, 30));
+    obstacles.push(slide(400, 300, 200, -25));
+    obstacles.push(circle(600, 140, 32));
+    obstacles.push(slide(700, 420, 150, 40));
+    ponytail = {x:830,y:280,r:26,swing:0};
+  } else if (n === 3) {
+    obstacles.push(slide(200, 450, 170, -40));
+    obstacles.push(circle(350, 200, 30));
+    obstacles.push(circle(450, 400, 28));
+    obstacles.push(slide(600, 150, 190, 30));
+    obstacles.push(circle(720, 380, 32));
+    ponytail = {x:830,y:130,r:24,swing:0};
+  } else if (n === 4) {
+    obstacles.push(circle(180, 130, 28));
+    obstacles.push(slide(280, 350, 180, 45));
+    obstacles.push(circle(430, 460, 26));
+    obstacles.push(circle(430, 120, 26));
+    obstacles.push(slide(580, 280, 220, -35));
+    obstacles.push(circle(750, 150, 30));
+    ponytail = {x:840,y:440,r:22,swing:0};
+  } else if (n === 5) {
+    obstacles.push(slide(160, 200, 160, 50));
+    obstacles.push(circle(300, 420, 28));
+    obstacles.push(slide(420, 150, 180, -40));
+    obstacles.push(circle(560, 300, 30));
+    obstacles.push(slide(660, 470, 170, 30));
+    obstacles.push(circle(760, 200, 26));
+    obstacles.push(circle(500, 480, 22));
+    ponytail = {x:840,y:100,r:20,swing:0};
+  } else if (n === 6) {
+    // gates: narrow slits to thread
+    obstacles.push(wall(260, 14, 24, 220));
+    obstacles.push(wall(260, 320, 24, 226));
+    obstacles.push(circle(420, 200, 28));
+    obstacles.push(wall(560, 14, 24, 300));
+    obstacles.push(wall(560, 400, 24, 146));
+    obstacles.push(slide(700, 300, 170, -30));
+    ponytail = {x:830,y:100,r:22,swing:0};
+  } else if (n === 7) {
+    // moving bumpers
+    obstacles.push(mover(220, 100, 220, 460, 26, 140));
+    obstacles.push(slide(360, 280, 170, 20));
+    obstacles.push(mover(520, 460, 520, 100, 24, 110));
+    obstacles.push(circle(680, 280, 30));
+    ponytail = {x:830,y:280,r:22,swing:0};
+  } else if (n === 8) {
+    // spinning slides
+    obstacles.push(spinner(280, 280, 190, 0, 0.02));
+    obstacles.push(circle(150, 460, 24));
+    obstacles.push(spinner(560, 200, 170, 45, -0.028));
+    obstacles.push(mover(720, 130, 720, 430, 22, 130));
+    ponytail = {x:840,y:280,r:20,swing:0};
+  } else if (n === 9) {
+    // portals plus gates
+    obstacles.push(...portalPair(180, 460, 700, 100, 26));
+    obstacles.push(wall(380, 14, 24, 260));
+    obstacles.push(wall(380, 340, 24, 206));
+    obstacles.push(circle(500, 460, 26));
+    obstacles.push(spinner(620, 260, 150, 0, 0.025));
+    ponytail = {x:840,y:440,r:20,swing:0};
+  } else {
+    // level 10: everything at once, hardest
+    obstacles.push(mover(180, 100, 180, 460, 24, 120));
+    obstacles.push(wall(300, 14, 24, 240));
+    obstacles.push(wall(300, 340, 24, 206));
+    obstacles.push(spinner(450, 280, 190, 0, -0.03));
+    obstacles.push(...portalPair(600, 460, 760, 130, 24));
+    obstacles.push(mover(680, 280, 820, 280, 22, 90));
+    ponytail = {x:840,y:460,r:18,swing:0};
+  }
+  currentTaunt = TAUNTS[Math.floor(Math.random()*TAUNTS.length)];
+  tauntTimer = 240;
+}
+
+function circleRectCollide(cx, cy, cr, rx, ry, rw, rh) {
+  const closestX = Math.max(rx, Math.min(cx, rx+rw));
+  const closestY = Math.max(ry, Math.min(cy, ry+rh));
+  const dx = cx - closestX, dy = cy - closestY;
+  return { hit: (dx*dx+dy*dy) < cr*cr, closestX, closestY, dx, dy };
+}
+
+function resolveBorders() {
+  for (const w of borders) {
+    const c = circleRectCollide(ball.x, ball.y, ball.r, w.x, w.y, w.w, w.h);
+    if (c.hit) {
+      if (Math.abs(c.dx) > Math.abs(c.dy)) {
+        ball.vx *= -1;
+        ball.x += c.dx > 0 ? (ball.r - Math.abs(c.dx)) : -(ball.r - Math.abs(c.dx));
+      } else {
+        ball.vy *= -1;
+        ball.y += c.dy > 0 ? (ball.r - Math.abs(c.dy)) : -(ball.r - Math.abs(c.dy));
+      }
+    }
+  }
+}
+
+function resolveCircleBumper(ob) {
+  const dx = ball.x - ob.x, dy = ball.y - ob.y;
+  const dist = Math.hypot(dx, dy);
+  const minDist = ob.r + ball.r;
+  if (dist < minDist && dist > 0.0001) {
+    const nx = dx / dist, ny = dy / dist;
+    // push out
+    const overlap = minDist - dist;
+    ball.x += nx * overlap;
+    ball.y += ny * overlap;
+    // reflect velocity about normal
+    const dot = ball.vx * nx + ball.vy * ny;
+    ball.vx = ball.vx - 2 * dot * nx;
+    ball.vy = ball.vy - 2 * dot * ny;
+    // bumper boost
+    let speed = Math.hypot(ball.vx, ball.vy);
+    speed = Math.max(speed * 1.15, 4.5);
+    const ang = Math.atan2(ball.vy, ball.vx);
+    ball.vx = Math.cos(ang) * speed;
+    ball.vy = Math.sin(ang) * speed;
+    ob.hitTimer = 20;
+  }
+}
+
+function resolveSlide(ob) {
+  // transform ball into slide-local space
+  const cos = Math.cos(-ob.angle), sin = Math.sin(-ob.angle);
+  const dx = ball.x - ob.x, dy = ball.y - ob.y;
+  const lx = dx * cos - dy * sin;
+  const ly = dx * sin + dy * cos;
+  const hl = ob.len / 2, ht = ob.thickness / 2;
+  const clx = Math.max(-hl, Math.min(lx, hl));
+  const cly = Math.max(-ht, Math.min(ly, ht));
+  const ddx = lx - clx, ddy = ly - cly;
+  const distSq = ddx*ddx + ddy*ddy;
+  if (distSq < ball.r * ball.r) {
+    const dist = Math.sqrt(distSq) || 0.0001;
+    // push out along local normal
+    let nlx = ddx / dist, nly = ddy / dist;
+    if (distSq < 0.0001) { nlx = 0; nly = ly >= 0 ? 1 : -1; }
+    const pushLx = clx + nlx * ball.r;
+    const pushLy = cly + nly * ball.r;
+    const wcos = Math.cos(ob.angle), wsin = Math.sin(ob.angle);
+    ball.x = ob.x + pushLx * wcos - pushLy * wsin;
+    ball.y = ob.y + pushLx * wsin + pushLy * wcos;
+
+    // redirect velocity to align with slide direction, keep the sign matching incoming motion
+    const dirX = wcos, dirY = wsin;
+    const dot = ball.vx * dirX + ball.vy * dirY;
+    const sign = dot >= 0 ? 1 : -1;
+    let speed = Math.hypot(ball.vx, ball.vy);
+    speed = Math.max(speed * 1.06, 3.5);
+    ball.vx = dirX * sign * speed;
+    ball.vy = dirY * sign * speed;
+    ob.hitTimer = 20;
+  }
+}
+
+function resolveWall(ob) {
+  const c = circleRectCollide(ball.x, ball.y, ball.r, ob.x, ob.y, ob.w, ob.h);
+  if (c.hit) {
+    if (Math.abs(c.dx) > Math.abs(c.dy)) {
+      ball.vx *= -1;
+      ball.x += c.dx > 0 ? (ball.r - Math.abs(c.dx)) : -(ball.r - Math.abs(c.dx));
+    } else {
+      ball.vy *= -1;
+      ball.y += c.dy > 0 ? (ball.r - Math.abs(c.dy)) : -(ball.r - Math.abs(c.dy));
+    }
+  }
+}
+
+function resolvePortal(ob) {
+  if (ob.cooldown > 0) return;
+  const dx = ball.x - ob.x, dy = ball.y - ob.y;
+  if (Math.hypot(dx, dy) < ob.r + ball.r) {
+    const ang = Math.atan2(ball.vy, ball.vx);
+    ball.x = ob.partner.x + Math.cos(ang) * (ob.partner.r + ball.r + 4);
+    ball.y = ob.partner.y + Math.sin(ang) * (ob.partner.r + ball.r + 4);
+    ob.cooldown = 30;
+    ob.partner.cooldown = 30;
+    ob.hitTimer = 20;
+    ob.partner.hitTimer = 20;
+  }
+}
+
+function animateObstacles() {
+  for (const ob of obstacles) {
+    if (ob.type === 'mover') {
+      ob.t += 1;
+      const s = (Math.sin((ob.t / ob.period) * Math.PI * 2) + 1) / 2;
+      ob.x = ob.x0 + (ob.x1 - ob.x0) * s;
+      ob.y = ob.y0 + (ob.y1 - ob.y0) * s;
+    } else if (ob.type === 'spinner') {
+      ob.angle += ob.angleSpeed;
+    } else if (ob.type === 'portal' && ob.cooldown > 0) {
+      ob.cooldown--;
+    }
+  }
+}
+
+function update() {
+  animateObstacles();
+  if (ball.moving && !gameWon) {
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+    ball.vx *= FRICTION;
+    ball.vy *= FRICTION;
+
+    resolveBorders();
+    for (const ob of obstacles) {
+      if (ob.type === 'circle' || ob.type === 'mover') resolveCircleBumper(ob);
+      else if (ob.type === 'slide' || ob.type === 'spinner') resolveSlide(ob);
+      else if (ob.type === 'wall') resolveWall(ob);
+      else if (ob.type === 'portal') resolvePortal(ob);
+    }
+
+    const speed = Math.hypot(ball.vx, ball.vy);
+    if (speed < MIN_SPEED) {
+      ball.vx = 0; ball.vy = 0; ball.moving = false;
+    }
+
+    const dx = ball.x - ponytail.x, dy = ball.y - ponytail.y;
+    if (Math.hypot(dx, dy) < ball.r + ponytail.r) {
+      gameWon = true;
+      ball.vx = 0; ball.vy = 0; ball.moving = false;
+      currentTaunt = WIN_LINES[Math.floor(Math.random()*WIN_LINES.length)];
+      tauntTimer = 99999;
+      if (level >= MAX_LEVEL) {
+        msgEl.textContent = "ALL LEVELS CLEARED! You are Zlatan's equal.";
+      } else {
+        msgEl.textContent = "Level " + level + " complete!";
+      }
+      restartBtn.style.display = "block";
+      restartBtn.textContent = level >= MAX_LEVEL ? "Play Again From Level 1" : "Next Level";
+    }
+  }
+
+  if (ponytail) ponytail.swing += 0.08;
+  for (const ob of obstacles) if (ob.hitTimer > 0) ob.hitTimer--;
+  if (tauntTimer > 0) tauntTimer--;
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+
+  for (let i=0;i<W;i+=60) {
+    ctx.fillStyle = (i/60)%2===0 ? '#2d6a2d' : '#2a632a';
+    ctx.fillRect(i,0,60,H);
+  }
+
+  ctx.fillStyle = '#3a2410';
+  for (const w of borders) {
+    ctx.fillRect(w.x, w.y, w.w, w.h);
+  }
+
+  for (const ob of obstacles) {
+    if (ob.type === 'circle') {
+      const glow = ob.hitTimer > 0;
+      const grad = ctx.createRadialGradient(ob.x, ob.y, 2, ob.x, ob.y, ob.r);
+      grad.addColorStop(0, glow ? '#fff6b0' : '#ff5050');
+      grad.addColorStop(1, glow ? '#ffb400' : '#a80000');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(ob.x, ob.y, ob.r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(ob.x, ob.y, ob.r - 6, 0, Math.PI*2);
+      ctx.stroke();
+    } else if (ob.type === 'slide' || ob.type === 'spinner') {
+      const isSpinner = ob.type === 'spinner';
+      ctx.save();
+      ctx.translate(ob.x, ob.y);
+      ctx.rotate(ob.angle);
+      const hl = ob.len/2, ht = ob.thickness/2;
+      const glow = ob.hitTimer > 0;
+      ctx.fillStyle = isSpinner ? (glow ? '#ffc9f0' : '#e050c0') : (glow ? '#fff2a0' : '#ffd700');
+      ctx.fillRect(-hl, -ht, ob.len, ob.thickness);
+      ctx.strokeStyle = isSpinner ? '#7a0060' : '#8a6d00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-hl, -ht, ob.len, ob.thickness);
+      // direction stripes
+      ctx.strokeStyle = isSpinner ? 'rgba(90,0,70,0.6)' : 'rgba(120,90,0,0.6)';
+      ctx.lineWidth = 3;
+      for (let sxi = -hl+10; sxi < hl; sxi += 18) {
+        ctx.beginPath();
+        ctx.moveTo(sxi, -ht);
+        ctx.lineTo(sxi + 8, ht);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (ob.type === 'mover') {
+      const glow = ob.hitTimer > 0;
+      const grad = ctx.createRadialGradient(ob.x, ob.y, 2, ob.x, ob.y, ob.r);
+      grad.addColorStop(0, glow ? '#fff6b0' : '#ffa940');
+      grad.addColorStop(1, glow ? '#ffb400' : '#c05a00');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(ob.x, ob.y, ob.r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(ob.x, ob.y, ob.r - 6, 0, Math.PI*2);
+      ctx.stroke();
+    } else if (ob.type === 'wall') {
+      ctx.fillStyle = '#3a2410';
+      ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
+      ctx.strokeStyle = '#c9a05a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(ob.x, ob.y, ob.w, ob.h);
+    } else if (ob.type === 'portal') {
+      const glow = ob.hitTimer > 0;
+      ctx.save();
+      ctx.strokeStyle = glow ? '#c0f0ff' : '#3fd0ff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(ob.x, ob.y, ob.r, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.strokeStyle = glow ? '#eafeff' : '#0a80b0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(ob.x, ob.y, ob.r - 7, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  if (ponytail) {
+    const px = ponytail.x, py = ponytail.y;
+    const sway = Math.sin(ponytail.swing) * 10;
+    ctx.fillStyle = '#e0a878';
+    ctx.beginPath();
+    ctx.arc(px, py, ponytail.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(px + ponytail.r*0.6, py - ponytail.r*0.5);
+    ctx.quadraticCurveTo(px + ponytail.r + 20 + sway, py - 10, px + ponytail.r + 30 + sway, py + 20);
+    ctx.stroke();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(px-6, py-4, 2.5, 0, Math.PI*2);
+    ctx.arc(px+6, py-4, 2.5, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, py+6, 6, 0, Math.PI);
+    ctx.stroke();
+    if (tauntTimer > 0 && currentTaunt) {
+      ctx.font = "bold 14px Arial";
+      const textW = ctx.measureText(currentTaunt).width;
+      const bx = px - textW/2 - 10, by = py - ponytail.r - 50;
+      const bw = textW + 20, bh = 32;
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 8); else ctx.rect(bx,by,bw,bh);
+      ctx.fill();
+      ctx.strokeStyle = '#333';
+      ctx.stroke();
+      ctx.fillStyle = '#000';
+      ctx.fillText(currentTaunt, bx+10, by+21);
+    }
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, 3.5, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = "bold 12px Arial";
+  ctx.fillText("Zlatan's shot", ball.x - 30, ball.y + 30);
+
+  if (dragging && dragCurrent) {
+    const dx = ball.x - dragCurrent.x;
+    const dy = ball.y - dragCurrent.y;
+    const dist = Math.min(Math.hypot(dx,dy), MAX_DRAG);
+    const ang = Math.atan2(dy,dx);
+    const ex = ball.x + Math.cos(ang)*dist*1.6;
+    const ey = ball.y + Math.sin(ang)*dist*1.6;
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6,6]);
+    ctx.beginPath();
+    ctx.moveTo(ball.x, ball.y);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffd700';
+    ctx.font = "bold 13px Arial";
+    ctx.fillText(Math.round((dist/MAX_DRAG)*100) + "% power", ball.x+10, ball.y-20);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  if (ball.moving || gameWon) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (Math.hypot(mx-ball.x, my-ball.y) < 40) {
+    dragging = true;
+    dragCurrent = {x: mx, y: my};
+  }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const rect = canvas.getBoundingClientRect();
+  dragCurrent = {x: e.clientX - rect.left, y: e.clientY - rect.top};
+});
+
+window.addEventListener('mouseup', () => {
+  if (!dragging || !dragCurrent) { dragging = false; return; }
+  const dx = ball.x - dragCurrent.x;
+  const dy = ball.y - dragCurrent.y;
+  const dist = Math.min(Math.hypot(dx,dy), MAX_DRAG);
+  if (dist > 8) {
+    const ang = Math.atan2(dy,dx);
+    ball.vx = Math.cos(ang) * dist * (18/MAX_DRAG);
+    ball.vy = Math.sin(ang) * dist * (18/MAX_DRAG);
+    ball.moving = true;
+    shots++;
+    shotsEl.textContent = shots;
+    currentTaunt = TAUNTS[Math.floor(Math.random()*TAUNTS.length)];
+    tauntTimer = 200;
+  }
+  dragging = false;
+  dragCurrent = null;
+});
+
+restartBtn.addEventListener('click', () => {
+  if (level >= MAX_LEVEL && msgEl.textContent.includes("ALL LEVELS")) {
+    level = 1;
+  } else if (gameWon) {
+    level = level >= MAX_LEVEL ? 1 : level + 1;
+  }
+  buildLevel(level);
+});
+
+document.getElementById('maxlevel').textContent = MAX_LEVEL;
+buildLevel(level);
+loop();
+</script>
+</body>
+</html>
