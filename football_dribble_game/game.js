@@ -123,6 +123,62 @@
   canvas.addEventListener("mouseenter", updateMouseFromEvent);
   canvas.addEventListener("mouseleave", function () { mouse.active = false; });
 
+  // ---- Touch steering (iPad/iPhone/tablets) ----
+  // There's no keyboard or mouse on a touchscreen, so touch gets its own
+  // scheme: drag anywhere on the pitch and the player moves in the
+  // direction you're dragging, like a joystick anchored at the finger's
+  // starting point. Lift your finger without having dragged (a tap) to
+  // shoot in the direction the player is currently facing.
+  var touch = { active: false, originX: 0, originY: 0, dirX: 0, dirY: 0, moved: false };
+  var TOUCH_TAP_THRESHOLD = 12; // px -- drags shorter than this count as a tap-to-shoot, not a move
+
+  function touchPointFromEvent(e) {
+    var rect = canvas.getBoundingClientRect();
+    var t = e.touches[0] || e.changedTouches[0];
+    return {
+      x: (t.clientX - rect.left) * (canvas.width / rect.width),
+      y: (t.clientY - rect.top) * (canvas.height / rect.height)
+    };
+  }
+
+  function onTouchStart(e) {
+    e.preventDefault();
+    var p = touchPointFromEvent(e);
+    touch.active = true;
+    touch.moved = false;
+    touch.originX = p.x;
+    touch.originY = p.y;
+    touch.dirX = 0;
+    touch.dirY = 0;
+  }
+
+  function onTouchMove(e) {
+    if (!touch.active) return;
+    e.preventDefault();
+    var p = touchPointFromEvent(e);
+    var dx = p.x - touch.originX, dy = p.y - touch.originY;
+    var dist = Math.hypot(dx, dy);
+    if (dist > TOUCH_TAP_THRESHOLD) {
+      touch.moved = true;
+      touch.dirX = dx / dist;
+      touch.dirY = dy / dist;
+    }
+  }
+
+  function onTouchEnd(e) {
+    if (!touch.active) return;
+    e.preventDefault();
+    if (!touch.moved) { shoot(); }
+    touch.active = false;
+    touch.dirX = 0;
+    touch.dirY = 0;
+  }
+
+  canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+  canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+  canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+  canvas.addEventListener("touchcancel", onTouchEnd, { passive: false });
+
   function inputVector() {
     var dx = 0, dy = 0;
     for (var k in keys) {
@@ -133,6 +189,10 @@
     }
     var len = Math.hypot(dx, dy);
     if (len > 0) { dx /= len; dy /= len; return { x: dx, y: dy }; }
+
+    if (touch.active && (touch.dirX !== 0 || touch.dirY !== 0)) {
+      return { x: touch.dirX, y: touch.dirY };
+    }
 
     if (mouse.active) {
       var mdx = mouse.x - player.x, mdy = mouse.y - player.y;

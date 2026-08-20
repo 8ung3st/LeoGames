@@ -28,7 +28,7 @@
     background: #ffd700; border: none; border-radius: 6px; font-weight: bold;
     display: none; z-index: 20; pointer-events: auto;
   }
-  canvas { display: block; background: #2d6a2d; }
+  canvas { display: block; background: #2d6a2d; touch-action: none; }
   #hint {
     position: absolute; bottom: 10px; left: 10px; color: #cfe; font-size: 13px;
     text-shadow: 0 0 4px #000; z-index: 5; max-width: 500px;
@@ -723,6 +723,10 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', () => {
+  releaseShot();
+});
+
+function releaseShot() {
   if (!dragging || !dragCurrent) { dragging = false; return; }
   const dx = ball.x - dragCurrent.x;
   const dy = ball.y - dragCurrent.y;
@@ -737,6 +741,42 @@ window.addEventListener('mouseup', () => {
     currentTaunt = TAUNTS[Math.floor(Math.random()*TAUNTS.length)];
     tauntTimer = 200;
   }
+  dragging = false;
+  dragCurrent = null;
+}
+
+// Touch support (iPad/iPhone/tablets): same drag-to-shoot gesture as the
+// mouse, just driven by touch events instead. preventDefault stops the
+// page from scrolling/zooming while you're aiming a shot.
+function touchPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0] || e.changedTouches[0];
+  return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+}
+
+canvas.addEventListener('touchstart', (e) => {
+  if (ball.moving || gameWon || gameLost) return;
+  const p = touchPos(e);
+  if (Math.hypot(p.x-ball.x, p.y-ball.y) < 40) {
+    e.preventDefault();
+    dragging = true;
+    dragCurrent = p;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  if (!dragging) return;
+  e.preventDefault();
+  dragCurrent = touchPos(e);
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  if (!dragging) return;
+  e.preventDefault();
+  releaseShot();
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => {
   dragging = false;
   dragCurrent = null;
 });
