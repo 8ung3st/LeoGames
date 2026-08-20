@@ -42,7 +42,7 @@
   <div id="ui">Level: <span id="level">1</span> / <span id="maxlevel">5</span> &nbsp; Shots: <span id="shots">0</span></div>
   <div id="msg"></div>
   <button id="restart">Play Again</button>
-  <div id="hint">Drag from the ball and release to shoot. Yellow bars are slides that fling the ball along their angle (pink ones spin!). Red circles are bounce bumpers (orange ones drift back and forth). Brown blocks are gate walls. Blue rings are portals. Get the ball into the talking ponytail!</div>
+  <div id="hint">Drag from the ball and release to shoot. Yellow bars are slides that fling the ball along their angle (pink ones spin!). Red circles are bounce bumpers (orange ones drift back and forth). Brown blocks are gate walls. Blue rings are portals. Black spiky bombs blow you up on contact — dodge them and hit the talking ponytail!</div>
   <canvas id="game" width="900" height="560"></canvas>
 </div>
 
@@ -72,9 +72,11 @@ const WIN_LINES = [
 ];
 
 let level = 1;
-const MAX_LEVEL = 10;
+const MAX_LEVEL = 15;
 let shots = 0;
 let gameWon = false;
+let gameLost = false;
+let explosion = null; // {x,y,timer}
 
 // Ball state
 let ball = { x: 60, y: H/2, r: 14, vx: 0, vy: 0, moving: false };
@@ -102,6 +104,7 @@ function spinner(x,y,len,angleDeg,angleSpeed) {
   return {type:'spinner', x, y, len, thickness: 16, angle: angleDeg*Math.PI/180, angleSpeed, hitTimer:0};
 }
 function wall(x,y,w,h) { return {type:'wall', x, y, w, h}; }
+function bomb(x,y,r) { return {type:'bomb', x, y, r, hitTimer:0}; }
 function portalPair(xA,yA,xB,yB,r) {
   const a = {type:'portal', x:xA, y:yA, r, cooldown:0, hitTimer:0};
   const b = {type:'portal', x:xB, y:yB, r, cooldown:0, hitTimer:0};
@@ -116,6 +119,8 @@ function buildLevel(n) {
   shotsEl.textContent = shots;
   levelEl.textContent = n;
   gameWon = false;
+  gameLost = false;
+  explosion = null;
   msgEl.textContent = "";
   restartBtn.style.display = "none";
 
@@ -151,6 +156,7 @@ function buildLevel(n) {
     obstacles.push(circle(430, 120, 26));
     obstacles.push(slide(580, 280, 220, -35));
     obstacles.push(circle(750, 150, 30));
+    obstacles.push(bomb(780, 400, 22));
     ponytail = {x:840,y:440,r:22,swing:0};
   } else if (n === 5) {
     obstacles.push(slide(160, 200, 160, 50));
@@ -176,6 +182,7 @@ function buildLevel(n) {
     obstacles.push(slide(360, 280, 170, 20));
     obstacles.push(mover(520, 460, 520, 100, 24, 110));
     obstacles.push(circle(680, 280, 30));
+    obstacles.push(bomb(770, 230, 20));
     ponytail = {x:830,y:280,r:22,swing:0};
   } else if (n === 8) {
     // spinning slides
@@ -191,9 +198,10 @@ function buildLevel(n) {
     obstacles.push(wall(380, 340, 24, 206));
     obstacles.push(circle(500, 460, 26));
     obstacles.push(spinner(620, 260, 150, 0, 0.025));
+    obstacles.push(bomb(770, 400, 20));
     ponytail = {x:840,y:440,r:20,swing:0};
-  } else {
-    // level 10: everything at once, hardest
+  } else if (n === 10) {
+    // level 10: everything at once, hardest so far
     obstacles.push(mover(180, 100, 180, 460, 24, 120));
     obstacles.push(wall(300, 14, 24, 240));
     obstacles.push(wall(300, 340, 24, 206));
@@ -201,6 +209,80 @@ function buildLevel(n) {
     obstacles.push(...portalPair(600, 460, 760, 130, 24));
     obstacles.push(mover(680, 280, 820, 280, 22, 90));
     ponytail = {x:840,y:460,r:18,swing:0};
+  } else if (n === 11) {
+    obstacles.push(wall(200, 14, 24, 210));
+    obstacles.push(wall(200, 300, 24, 246));
+    obstacles.push(spinner(340, 180, 170, 0, 0.025));
+    obstacles.push(mover(460, 100, 460, 460, 24, 110));
+    obstacles.push(circle(580, 200, 28));
+    obstacles.push(slide(700, 380, 170, -30));
+    obstacles.push(circle(760, 150, 26));
+    obstacles.push(bomb(780, 60, 18));
+    ponytail = {x:840,y:110,r:20,swing:0};
+  } else if (n === 12) {
+    obstacles.push(...portalPair(160, 470, 620, 90, 24));
+    obstacles.push(spinner(300, 250, 180, 20, -0.03));
+    obstacles.push(mover(430, 100, 430, 460, 22, 100));
+    obstacles.push(wall(540, 14, 24, 260));
+    obstacles.push(wall(540, 340, 24, 206));
+    obstacles.push(circle(680, 460, 26));
+    obstacles.push(spinner(760, 220, 150, 0, 0.032));
+    ponytail = {x:830,y:400,r:18,swing:0};
+  } else if (n === 13) {
+    obstacles.push(circle(150, 150, 24));
+    obstacles.push(slide(230, 400, 160, -35));
+    obstacles.push(spinner(360, 220, 180, 0, 0.028));
+    obstacles.push(mover(480, 90, 480, 470, 22, 95));
+    obstacles.push(wall(560, 14, 24, 230));
+    obstacles.push(wall(560, 320, 24, 226));
+    obstacles.push(...portalPair(650, 460, 780, 100, 22));
+    obstacles.push(circle(700, 260, 26));
+    obstacles.push(bomb(790, 340, 18));
+    ponytail = {x:840,y:280,r:17,swing:0};
+  } else if (n === 14) {
+    obstacles.push(mover(140, 90, 140, 460, 22, 100));
+    obstacles.push(slide(230, 250, 150, 30));
+    obstacles.push(circle(330, 460, 24));
+    obstacles.push(spinner(400, 130, 170, 0, -0.03));
+    obstacles.push(wall(480, 14, 24, 210));
+    obstacles.push(wall(480, 300, 24, 246));
+    obstacles.push(mover(580, 460, 580, 100, 22, 115));
+    obstacles.push(spinner(680, 260, 160, 40, 0.026));
+    obstacles.push(...portalPair(220, 460, 760, 90, 22));
+    obstacles.push(circle(770, 420, 24));
+    ponytail = {x:840,y:250,r:16,swing:0};
+  } else {
+    // level 15: the whole field is packed, no empty stretch left
+    obstacles.push(circle(150, 90, 22));
+    obstacles.push(slide(280, 90, 140, 20));
+    obstacles.push(circle(410, 90, 20));
+    obstacles.push(spinner(540, 90, 150, 0, 0.02));
+    obstacles.push(circle(670, 90, 22));
+
+    obstacles.push(slide(150, 210, 140, -25));
+    obstacles.push(circle(280, 210, 24));
+    obstacles.push(mover(410, 150, 410, 270, 20, 90));
+    obstacles.push(circle(540, 210, 22));
+    obstacles.push(slide(670, 210, 150, 25));
+
+    obstacles.push(circle(150, 330, 22));
+    obstacles.push(spinner(280, 330, 150, 30, -0.025));
+    obstacles.push(circle(410, 330, 20));
+    obstacles.push(slide(540, 330, 150, -20));
+    obstacles.push(circle(670, 330, 24));
+
+    obstacles.push(slide(150, 450, 140, 20));
+    obstacles.push(circle(280, 450, 22));
+    obstacles.push(mover(410, 390, 410, 510, 20, 100));
+    obstacles.push(circle(540, 450, 22));
+    obstacles.push(slide(670, 450, 140, -25));
+
+    obstacles.push(wall(770, 14, 24, 180));
+    obstacles.push(wall(770, 380, 24, 166));
+    obstacles.push(...portalPair(200, 480, 740, 280, 20));
+    obstacles.push(bomb(800, 230, 16));
+
+    ponytail = {x:850,y:280,r:16,swing:0};
   }
   currentTaunt = TAUNTS[Math.floor(Math.random()*TAUNTS.length)];
   tauntTimer = 240;
@@ -313,6 +395,22 @@ function resolvePortal(ob) {
   }
 }
 
+function triggerBomb(ob) {
+  gameLost = true;
+  ball.vx = 0; ball.vy = 0; ball.moving = false;
+  explosion = {x: ob.x, y: ob.y, timer: 30};
+  msgEl.textContent = "BOOM! Zlatan stepped on a bomb. Try again!";
+  restartBtn.style.display = "block";
+  restartBtn.textContent = "Retry Level";
+}
+
+function resolveBomb(ob) {
+  const dx = ball.x - ob.x, dy = ball.y - ob.y;
+  if (Math.hypot(dx, dy) < ob.r + ball.r) {
+    triggerBomb(ob);
+  }
+}
+
 function animateObstacles() {
   for (const ob of obstacles) {
     if (ob.type === 'mover') {
@@ -330,7 +428,11 @@ function animateObstacles() {
 
 function update() {
   animateObstacles();
-  if (ball.moving && !gameWon) {
+  if (explosion) {
+    explosion.timer--;
+    if (explosion.timer <= 0) explosion = null;
+  }
+  if (ball.moving && !gameWon && !gameLost) {
     ball.x += ball.vx;
     ball.y += ball.vy;
     ball.vx *= FRICTION;
@@ -342,7 +444,20 @@ function update() {
       else if (ob.type === 'slide' || ob.type === 'spinner') resolveSlide(ob);
       else if (ob.type === 'wall') resolveWall(ob);
       else if (ob.type === 'portal') resolvePortal(ob);
+      else if (ob.type === 'bomb') resolveBomb(ob);
     }
+
+    if (!gameLost) {
+    // hard safety clamp: no matter how fast the ball is going, it can
+    // never end up outside the playing field (prevents tunneling through
+    // the thin border walls at high bumper/portal speeds)
+    const BORDER = 14;
+    const minX = BORDER + ball.r, maxX = W - BORDER - ball.r;
+    const minY = BORDER + ball.r, maxY = H - BORDER - ball.r;
+    if (ball.x < minX) { ball.x = minX; ball.vx = Math.abs(ball.vx); }
+    if (ball.x > maxX) { ball.x = maxX; ball.vx = -Math.abs(ball.vx); }
+    if (ball.y < minY) { ball.y = minY; ball.vy = Math.abs(ball.vy); }
+    if (ball.y > maxY) { ball.y = maxY; ball.vy = -Math.abs(ball.vy); }
 
     const speed = Math.hypot(ball.vx, ball.vy);
     if (speed < MIN_SPEED) {
@@ -362,6 +477,7 @@ function update() {
       }
       restartBtn.style.display = "block";
       restartBtn.textContent = level >= MAX_LEVEL ? "Play Again From Level 1" : "Next Level";
+    }
     }
   }
 
@@ -454,7 +570,58 @@ function draw() {
       ctx.arc(ob.x, ob.y, ob.r - 7, 0, Math.PI*2);
       ctx.stroke();
       ctx.restore();
+    } else if (ob.type === 'bomb') {
+      const wobble = Math.sin(Date.now()/150 + ob.x) * 2;
+      ctx.save();
+      ctx.translate(ob.x, ob.y);
+      // spikes
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * ob.r * 0.7, Math.sin(a) * ob.r * 0.7);
+        ctx.lineTo(Math.cos(a) * (ob.r + 6), Math.sin(a) * (ob.r + 6));
+        ctx.stroke();
+      }
+      // body
+      const grad = ctx.createRadialGradient(-ob.r*0.3,-ob.r*0.3,1,0,0,ob.r);
+      grad.addColorStop(0, '#4a4a4a');
+      grad.addColorStop(1, '#0a0a0a');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, ob.r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // fuse
+      ctx.strokeStyle = '#8a6d00';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, -ob.r);
+      ctx.quadraticCurveTo(ob.r*0.3, -ob.r-10, ob.r*0.5 + wobble, -ob.r-16);
+      ctx.stroke();
+      // spark
+      ctx.fillStyle = Math.random() > 0.5 ? '#ffcc33' : '#ff5500';
+      ctx.beginPath();
+      ctx.arc(ob.r*0.5 + wobble, -ob.r-16, 4, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
     }
+  }
+
+  if (explosion) {
+    const t = explosion.timer / 30;
+    const rad = (1 - t) * 90 + 10;
+    const grad = ctx.createRadialGradient(explosion.x, explosion.y, 0, explosion.x, explosion.y, rad);
+    grad.addColorStop(0, `rgba(255,255,200,${t})`);
+    grad.addColorStop(0.4, `rgba(255,150,0,${t*0.8})`);
+    grad.addColorStop(1, `rgba(255,0,0,0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(explosion.x, explosion.y, rad, 0, Math.PI*2);
+    ctx.fill();
   }
 
   if (ponytail) {
@@ -540,7 +707,7 @@ function loop() {
 }
 
 canvas.addEventListener('mousedown', (e) => {
-  if (ball.moving || gameWon) return;
+  if (ball.moving || gameWon || gameLost) return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left, my = e.clientY - rect.top;
   if (Math.hypot(mx-ball.x, my-ball.y) < 40) {
